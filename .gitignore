@@ -1,0 +1,9 @@
+bin
+obj
+.vs
+.idea
+project*
+*.exe
+*.zip
+smallsh
+old.c
