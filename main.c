@@ -21,6 +21,58 @@
 #define MAX_INPUT_LENGTH 2048
 #define MAX_ARGUMENT_NUMBER 512
 
+/* Check for variables that need to be expanded from "$$" to the process ID */
+int getArgumentLength(char* argument) {
+
+    /* Declare and Initialize variables */
+    pid_t pid = getpid();
+    char* pidString;
+    sprintf(pidString, "%d", pid);
+    int pidLength = strlen(pidString);
+    int variableCount = 0;
+    int i;
+
+    /* Count instances of $$ that must be expanded */
+    for(i = 0; i < strlen(argument) - 1; i++) {
+        if(argument[i] == '$' && argument[i + 1] == '$') {
+            variableCount++;
+            i++;
+        }
+    }
+
+    /* Calculate argument length */
+    return strlen(argument) - (2 * variableCount) + (pidLength * variableCount);
+}
+
+void expandVariable(char* token, char* argument) {
+    /* Set up and declare variables */
+    int t_i; // token index
+    int a_i = 0; // argument index
+    pid_t pid = getpid();
+    char* pidString;
+    sprintf(pidString, "%d", pid);
+    int pidLength = strlen(pidString);
+
+    /* Parse token for "$$" variable */
+
+    for (t_i = 0; t_i < strlen(token); t_i++) {
+
+        /* Copy pid to argument if "$$" is found */
+        if(token[t_i] == '$' && token[t_i+1] == '$') {
+            argument[a_i] = '\0';
+            strcat(argument, pidString);
+            t_i++;
+            a_i += pidLength;
+        }
+        /* Else, just copy the token char to argument */
+        else {
+            argument[a_i] = token[t_i];
+            a_i++;
+        }
+
+    }
+}
+
 /*
 *   Solicit input from the user.
 *   
@@ -48,6 +100,46 @@ void getInput(char* input) {
     input[offset] = '\0';
 }
 
+void parseInput(char* input) {
+
+    /* Set up string token and while loop*/
+    char whitespace[] = " \t\n\v\f\r";
+    char* saveptr;
+    char* token = strtok_r(input, whitespace, &saveptr);
+    char* argument;
+    int argNum = 0;
+    int argumentLength;
+
+    /* Save language in currentMovie while token is not NULL */
+    while (token)
+    {
+        
+        /* Catch comments */
+        if ((argNum == 0) && (token[0] == '#')) {
+            return;
+        }
+
+        /* Catch variable expansion tokens ("$$") */
+        argumentLength = getArgumentLength(token);
+        if (argNum == 0) {
+            argument = (char*) malloc(argumentLength);
+        } else {
+            argument = (char*) realloc(argument, argumentLength);
+        }
+        
+        expandVariable(token, argument);
+
+        printf("%s\n", argument);
+        token = strtok_r(NULL, whitespace, &saveptr);
+        argNum++;
+    }
+
+    free(argument);
+}
+
+
+
+
 /*
 *   Driver of the program (main).
 *
@@ -66,11 +158,12 @@ int main(void) {
     char input[MAX_INPUT_LENGTH];
     
 
-    while(strcmp(input, "exit") != 0) {
+    getInput(input);
 
+    while(strcmp(input, "exit") != 0) {
+        
+        parseInput(input);
         getInput(input);
-        printf("%s", input);
-        printf("\n");
     }
 
     return EXIT_SUCCESS;
