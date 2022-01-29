@@ -26,7 +26,7 @@ int getArgumentLength(char* argument) {
 
     /* Declare and Initialize variables */
     pid_t pid = getpid();
-    char* pidString;
+    char pidString[20];
     sprintf(pidString, "%d", pid);
     int pidLength = strlen(pidString);
     int variableCount = 0;
@@ -49,7 +49,7 @@ void expandVariable(char* token, char* argument) {
     int t_i; // token index
     int a_i = 0; // argument index
     pid_t pid = getpid();
-    char* pidString;
+    char pidString[20];
     sprintf(pidString, "%d", pid);
     int pidLength = strlen(pidString);
 
@@ -122,9 +122,9 @@ void parseInput(char* input) {
         /* Catch variable expansion tokens ("$$") */
         argumentLength = getArgumentLength(token);
         if (argNum == 0) {
-            argument = (char*) malloc(argumentLength);
+            argument = (char*) malloc(argumentLength + 1);
         } else {
-            argument = (char*) realloc(argument, argumentLength);
+            argument = (char*) realloc(argument, argumentLength + 1);
         }
         
         expandVariable(token, argument);
@@ -134,11 +134,11 @@ void parseInput(char* input) {
         argNum++;
     }
 
-    free(argument);
+    if (argNum > 0) {
+        free(argument);
+    }
+    
 }
-
-
-
 
 /*
 *   Driver of the program (main).
