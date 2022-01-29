@@ -100,44 +100,74 @@ void getInput(char* input) {
     input[offset] = '\0';
 }
 
-void parseInput(char* input) {
+int parseInput(char* input, char** command, char** argumentsArray) {
 
     /* Set up string token and while loop*/
     char whitespace[] = " \t\n\v\f\r";
     char* saveptr;
     char* token = strtok_r(input, whitespace, &saveptr);
-    char* argument;
     int argNum = 0;
     int argumentLength;
-
+    
     /* Save language in currentMovie while token is not NULL */
     while (token)
     {
         
         /* Catch comments */
         if ((argNum == 0) && (token[0] == '#')) {
-            return;
+            return 0;
         }
 
-        /* Catch variable expansion tokens ("$$") */
+        /* Catch variable expansion tokens ("$$"). 
+        *   Token value is converted into argument with
+        *   $$ variables expanded. */
         argumentLength = getArgumentLength(token);
         if (argNum == 0) {
-            argument = (char*) malloc(argumentLength + 1);
-        } else {
-            argument = (char*) realloc(argument, argumentLength + 1);
+            command[0] = (char*) malloc(argumentLength + 1);
+            expandVariable(token, command[0]);
         }
-        
-        expandVariable(token, argument);
+        else {
+            argumentsArray[argNum - 1] = (char*) malloc(argumentLength + 1);
+            expandVariable(token, argumentsArray[argNum - 1]);
+        }
 
-        printf("%s\n", argument);
         token = strtok_r(NULL, whitespace, &saveptr);
         argNum++;
     }
+   
+   return argNum;
+}
 
-    if (argNum > 0) {
-        free(argument);
+void executeInput(char** command, char** argumentsArray, int wordCount) {
+    if (strcmp(command[0], "cd") == 0) {
+
+        
+
+        /* If only the command was given, cd to the home directory */
+        if (wordCount == 1) {
+            setenv("PWD", getenv("HOME"), 1);
+        }
+        /* Else cd to the first argument directory */
+        else {
+
+        }
+
+        return;
     }
-    
+
+    if (strcmp(command[0], "status") == 0) {
+
+        return;
+    }
+
+    if (strcmp(command[0], "ls") == 0) {
+        printf("PWD is %s\n", getenv("PWD"));
+    }
+
+    else {
+
+        return;
+    }
 }
 
 /*
@@ -155,14 +185,19 @@ void parseInput(char* input) {
 */
 int main(void) {
 
+    /* Declare Variables */
     char input[MAX_INPUT_LENGTH];
+    char* command[1];
+    char* argumentsArray[MAX_ARGUMENT_NUMBER];
+    int wordCount;
     
 
     getInput(input);
 
     while(strcmp(input, "exit") != 0) {
         
-        parseInput(input);
+        wordCount = parseInput(input, command, argumentsArray);
+        if (wordCount > 0) executeInput(command, argumentsArray, wordCount);
         getInput(input);
     }
 
