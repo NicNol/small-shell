@@ -225,8 +225,11 @@ void checkForRedirect(char** argumentsArray, char** inputFile, char** outputFile
 
 }
 
-void handleRedirects(char** argumentsArray) {
+void handleRedirects(char** argumentsArray, bool backgroundProcess) {
     
+    /* Create a pointer to nullFile to be used with background processes */
+    char* nullFile = "/dev/null";
+
     /* Create a double pointer to keep track of input and output file paths */
     char** inputFile = malloc(sizeof(char*));
     char** outputFile = malloc(sizeof(char*));
@@ -235,8 +238,20 @@ void handleRedirects(char** argumentsArray) {
     *inputFile = NULL;
     *outputFile = NULL;
 
-    /* Check for redirects and redirect accordingly */
+    /* Check for redirects */
     checkForRedirect(argumentsArray, inputFile, outputFile);
+
+    /* If input or output file is not specified, mute shell by using a null file */
+    if ((*inputFile == NULL) && backgroundProcess) {
+        *inputFile = malloc(sizeof(nullFile));
+        strcpy(*inputFile, nullFile);
+    }
+    if ((*outputFile == NULL) && backgroundProcess) {
+        *outputFile = malloc(sizeof(nullFile));
+        strcpy(*outputFile, nullFile);
+    }
+
+    /* Perform redirects */
     redirect(*inputFile, *outputFile);
 
     /* Free memory */
@@ -432,7 +447,7 @@ int createNewProcess(char** argumentsArray, int wordCount){
         
         /* Child Case */
         case 0:
-            handleRedirects(argumentsArray);
+            handleRedirects(argumentsArray, backgroundProcess);
             execvp(argumentsArray[0], argumentsArray);
             perror("Could not find command in path\n");
             exit(1);
