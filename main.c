@@ -201,6 +201,7 @@ void stashSpawnPID(pid_t spawnPid, struct processNode** headNode) {
 
     /* Move the head to our newNode */
     *headNode = newNode;
+
 }
 
 void checkSpawnPID(struct processNode** headNode) {
@@ -210,6 +211,7 @@ void checkSpawnPID(struct processNode** headNode) {
     int processStatus;
     struct processNode* currentNode = *headNode;
     struct processNode* previousNode = NULL;
+    struct processNode* removedNode = NULL;
     char pidString[20];
     char pidStatusString[20];
 
@@ -236,7 +238,7 @@ void checkSpawnPID(struct processNode** headNode) {
             }
 
             /* Print message that process has terminated */
-            printf("PID %s exited with status %s\n", pidString, pidStatusString);
+            printf("Background PID %s exited with status %s\n", pidString, pidStatusString);
 
             /* Remove this processNode from the linked list */
             if (currentNode == *headNode) {
@@ -245,13 +247,32 @@ void checkSpawnPID(struct processNode** headNode) {
             else {
                 previousNode->next = currentNode->next;
             }
+            removedNode = currentNode;
             currentNode = currentNode->next;
+            free(removedNode);
         }
         /* Else process is still running. Check next process in linked list */
         else {
             previousNode = currentNode;
             currentNode = currentNode->next;
         }
+    }
+}
+
+void killSpawnPID(struct processNode** headNode) {
+
+    /* Declare and initialize variables */
+    struct processNode* currentNode = *headNode;
+    struct processNode* removedNode = NULL;
+
+    /* Traverse Linked List */
+    while(currentNode != NULL) {
+
+        /* Kill each the processID of each node and free the memory */
+        kill(currentNode->processID, SIGKILL);
+        removedNode = currentNode;
+        currentNode = currentNode->next;
+        free(removedNode);
     }
 }
 
@@ -272,6 +293,11 @@ void handleSpawnPID(char* action, pid_t spawnPid) {
     if ((headNode != NULL) && (strcmp(action, "check") == 0)) {
         checkSpawnPID(headNode);
     }
+
+    /* Action #3: Kill all background processes */
+    if ((headNode != NULL) && (strcmp(action, "kill") == 0)) {
+        killSpawnPID(headNode);
+    }
 }
 
 /*
@@ -286,10 +312,8 @@ int createNewProcess(char** argumentsArray, int wordCount){
 
     if (backgroundProcess) {
         argumentsArray[wordCount - 1] = NULL;
-        
     }
     
-
     /* Create a switch case to catch errors, child process, and parent process */
 	switch(spawnPid){
         
@@ -312,6 +336,7 @@ int createNewProcess(char** argumentsArray, int wordCount){
             /* If process should run in the background, add spawnPid to list of background processes */
             if (backgroundProcess) {
                 handleSpawnPID("stash", spawnPid);
+                printf("PID %d is running in the background\n", spawnPid);
             }
             /* If process is not a background process, set env variables
             *   with PID and exit status */
@@ -343,6 +368,7 @@ void executeInput(char** argumentsArray, int wordCount) {
 void cleanup() {
     unsetenv("spawnPID");
     unsetenv("spawnPIDStatus");
+    handleSpawnPID("kill", 0);
 }
 
 /*
