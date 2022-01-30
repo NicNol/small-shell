@@ -22,6 +22,11 @@
 #define MAX_INPUT_LENGTH 2048
 #define MAX_ARGUMENT_NUMBER 512
 
+struct processNode {
+    pid_t processID;
+    struct processNode* next;
+};
+
 /* Check for variables that need to be expanded from "$$" to the process ID */
 int getArgumentLength(char* argument) {
 
@@ -109,7 +114,7 @@ int parseInput(char* input, char** argumentsArray) {
     int argNum = 0;
     int argumentLength;
     
-    /* Save language in currentMovie while token is not NULL */
+    /* Parse words in input while token is not NULL */
     while (token)
     {
         
@@ -131,7 +136,7 @@ int parseInput(char* input, char** argumentsArray) {
     /* Terminate argumentsArray with a NULL pointer so we know when the list ends */
     argumentsArray[argNum] = NULL;
 
-   return argNum;
+    return argNum;
 }
 
 void changeDirectory(char* location, int wordCount) {
@@ -147,6 +152,128 @@ void changeDirectory(char* location, int wordCount) {
     return;
 }
 
+void getStatus() {
+    /* Get last child PID and its status from env */
+    char* pidString = getenv("spawnPID"); // if no spawnPID, returns NULL
+    char* pidStatusString = getenv("spawnPIDStatus");
+
+    /* If no child process has been created, print status 0 */
+    if (pidString == NULL) {
+        printf("exit status 0\n");
+        return;
+    }
+
+    /* Else print the last child PID and its status code */
+    printf("PID %s exited with status %s\n", pidString, pidStatusString);
+    return;
+}
+
+void setSpawnPID(pid_t spawnPid, int childStatus) {
+
+    /* Declare variables */
+    char pidString[20];
+    char pidStatusString[20];
+
+    /* Convert spawnPID to string*/
+    sprintf(pidString, "%d", spawnPid);
+
+    /* Check exit status and convert to string  */ 
+    if(WIFEXITED(childStatus)) {
+        /* Exited normally */
+        sprintf(pidStatusString, "%d", WEXITSTATUS(childStatus));
+    }
+    else {
+        /* Exited abnormally */
+        sprintf(pidStatusString, "%d", WTERMSIG(childStatus));
+    }
+
+    /* Set spawnPID and its status to environment variable */
+    setenv("spawnPID", pidString, 1);
+    setenv("spawnPIDStatus", pidStatusString, 1);
+}
+
+void stashSpawnPID(pid_t spawnPid, struct processNode** headNode) {
+
+    /* Create a new node */
+    struct processNode* newNode = malloc(sizeof(struct processNode));
+    newNode->processID = spawnPid;
+    if (headNode != NULL) newNode->next = *headNode;
+
+    /* Move the head to our newNode */
+    *headNode = newNode;
+}
+
+void checkSpawnPID(struct processNode** headNode) {
+
+    /* Declare and initialize variables */
+    int waitResult;
+    int processStatus;
+    struct processNode* currentNode = *headNode;
+    struct processNode* previousNode = NULL;
+    char pidString[20];
+    char pidStatusString[20];
+
+    /* Traverse Linked List */
+    while(currentNode != NULL) {
+
+        /* Check if process has terminated */
+        waitResult = waitpid(currentNode->processID, &processStatus, WNOHANG);
+
+        /* If result is not zero, process has terminated */
+        if (waitResult != 0) {
+
+            /* Convert spawnPID to string*/
+            sprintf(pidString, "%d", currentNode->processID);
+
+            /* Check exit status and convert to string  */ 
+            if(WIFEXITED(processStatus)) {
+                /* Exited normally */
+                sprintf(pidStatusString, "%d", WEXITSTATUS(processStatus));
+            }
+            else {
+                /* Exited abnormally */
+                sprintf(pidStatusString, "%d", WTERMSIG(processStatus));
+            }
+
+            /* Print message that process has terminated */
+            printf("PID %s exited with status %s\n", pidString, pidStatusString);
+
+            /* Remove this processNode from the linked list */
+            if (currentNode == *headNode) {
+                *headNode = currentNode->next;
+            }
+            else {
+                previousNode->next = currentNode->next;
+            }
+            currentNode = currentNode->next;
+        }
+        /* Else process is still running. Check next process in linked list */
+        else {
+            previousNode = currentNode;
+            currentNode = currentNode->next;
+        }
+    }
+}
+
+void handleSpawnPID(char* action, pid_t spawnPid) {
+
+    /* On first call of this function, create a static headNode pointer */
+    static struct processNode** headNode = NULL;
+    if (headNode == NULL) {
+        headNode = malloc(sizeof(malloc(sizeof(struct processNode))));
+    }
+
+    /* Action #1: Stash background spawnPid so that it can be checked later */
+    if (strcmp(action, "stash") == 0) {
+        stashSpawnPID(spawnPid, headNode);
+    }
+
+    /* Action #2: Check all background processes to see if any have ended */
+    if ((headNode != NULL) && (strcmp(action, "check") == 0)) {
+        checkSpawnPID(headNode);
+    }
+}
+
 /*
   Create a child process using fork()
 */
@@ -155,9 +282,13 @@ int createNewProcess(char** argumentsArray, int wordCount){
     /* Declare and initialize variables */
 	int childStatus;
 	pid_t spawnPid = fork();
-    char pidString[20];
-    char pidStatusString[20];
     bool backgroundProcess = (strcmp(argumentsArray[wordCount - 1], "&") == 0);
+
+    if (backgroundProcess) {
+        argumentsArray[wordCount - 1] = NULL;
+        
+    }
+    
 
     /* Create a switch case to catch errors, child process, and parent process */
 	switch(spawnPid){
@@ -177,30 +308,17 @@ int createNewProcess(char** argumentsArray, int wordCount){
         
         /* Parent Case */
         default:
-        
-            /* Wait for child process to terminate */
-            spawnPid = waitpid(spawnPid, &childStatus, 0);
 
+            /* If process should run in the background, add spawnPid to list of background processes */
+            if (backgroundProcess) {
+                handleSpawnPID("stash", spawnPid);
+            }
             /* If process is not a background process, set env variables
             *   with PID and exit status */
-            if (!backgroundProcess) {
-
-                /* Convert spawnPID to string*/
-                sprintf(pidString, "%d", spawnPid);
-
-                /* Check exit status and convert to string  */ 
-                if(WIFEXITED(childStatus)) {
-                    /* Exited normally */
-                    sprintf(pidStatusString, "%d", WEXITSTATUS(childStatus));
-                }
-                else {
-                    /* Exited abnormally */
-                    sprintf(pidStatusString, "%d", WTERMSIG(childStatus));
-                }
-
-                /* Set spawnPID and its status to environment variable */
-                setenv("spawnPID", pidString, 1);
-                setenv("spawnPIDStatus", pidStatusString, 1);
+            else {
+                /* Wait for child process to terminate */
+                spawnPid = waitpid(spawnPid, &childStatus, 0);
+                setSpawnPID(spawnPid, childStatus);
             }
 	} 
 }
@@ -213,16 +331,7 @@ void executeInput(char** argumentsArray, int wordCount) {
     }
 
     if (strcmp(command, "status") == 0) {
-        char* pidString = getenv("spawnPID"); // if no spawnPID, returns NULL
-        char* pidStatusString = getenv("spawnPIDStatus");
-
-        if (pidString == NULL) {
-            printf("exit status 0\n");
-            return;
-        }
-
-        printf("PID %s exited with status %s\n", pidString, pidStatusString);
-        return;
+        return getStatus();
     }
 
     else {
@@ -263,6 +372,7 @@ int main(void) {
         
         wordCount = parseInput(input, argumentsArray);
         if (wordCount > 0) executeInput(argumentsArray, wordCount);
+        handleSpawnPID("check", 0);
         getInput(input);
     }
 
