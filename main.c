@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 
 #define MAX_INPUT_LENGTH 2048
 #define MAX_ARGUMENT_NUMBER 512
@@ -137,6 +138,112 @@ int parseInput(char* input, char** argumentsArray) {
     argumentsArray[argNum] = NULL;
 
     return argNum;
+}
+
+void redirect(char* inputFile, char* outputFile) {
+
+    /* Declare variables */
+    int result;
+    int sourceFD;
+    int targetFD;
+
+    if (inputFile) {
+        // Open source file
+        sourceFD = open(inputFile, O_RDONLY);
+        if (sourceFD == -1) { 
+            perror("Input file does not exist"); 
+            exit(1); 
+        }
+
+        // Redirect stdin to source file
+        result = dup2(sourceFD, 0);
+        if (result == -1) { 
+            perror("Could not redirect input"); 
+            exit(1); 
+        }
+    }
+
+    if (outputFile) {
+        // Open target file
+        targetFD = open(outputFile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (targetFD == -1) { 
+            perror("Could not open or create output file"); 
+            exit(1); 
+        }
+    
+        // Redirect stdout to target file
+        result = dup2(targetFD, 1);
+        if (result == -1) { 
+            perror("Could not redirect output"); 
+            exit(1); 
+        }
+    }
+}
+
+void checkForRedirect(char** argumentsArray, char** inputFile, char** outputFile) {
+
+    /* Declare and initialize variables */
+    int index = 1;
+
+    /* Check arguments array for redirection */
+    while (argumentsArray[index] != NULL) {
+
+        /* If '<' argument is found, copy the next argument to inputFile */
+        if (strcmp(argumentsArray[index], "<") == 0) {
+
+            /* Create space for inputFile string, then copy it from the argument array */
+            *inputFile = malloc(sizeof(argumentsArray[index + 1]));
+            strcpy(*inputFile, argumentsArray[index + 1]);
+
+            /* Remove redirection from the argument array */
+            argumentsArray[index] = '\0';
+            argumentsArray[index + 1] = '\0';
+
+            /* Advance the index pointer */
+            index += 2;
+            continue;
+        }
+
+        /* If '>' argument is found, copy the next argument to outputFile */
+        if (strcmp(argumentsArray[index], ">") == 0) {
+
+            /* Create space for ouputFile string, then copy it from the argument array */
+            *outputFile = malloc(sizeof(argumentsArray[index + 1]));
+            strcpy(*outputFile, argumentsArray[index + 1]);
+
+            /* Remove redirection from the argument array */
+            argumentsArray[index] = '\0';
+            argumentsArray[index + 1] = '\0';
+
+            /* Advance the index pointer */
+            index += 2;
+            continue;
+        }
+
+        index++;
+    }
+
+}
+
+void handleRedirects(char** argumentsArray) {
+    
+    /* Create a double pointer to keep track of input and output file paths */
+    char** inputFile = malloc(sizeof(char*));
+    char** outputFile = malloc(sizeof(char*));
+
+    /* Set the each file path to NULL in case there is no redirection */
+    *inputFile = NULL;
+    *outputFile = NULL;
+
+    /* Check for redirects and redirect accordingly */
+    checkForRedirect(argumentsArray, inputFile, outputFile);
+    redirect(*inputFile, *outputFile);
+
+    /* Free memory */
+    free(*inputFile);
+    free(inputFile);
+    free(*outputFile);
+    free(outputFile);
 }
 
 void changeDirectory(char* location, int wordCount) {
@@ -325,6 +432,7 @@ int createNewProcess(char** argumentsArray, int wordCount){
         
         /* Child Case */
         case 0:
+            handleRedirects(argumentsArray);
             execvp(argumentsArray[0], argumentsArray);
             perror("Could not find command in path\n");
             exit(1);
