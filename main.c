@@ -138,26 +138,12 @@ void changeDirectory(char* location, int wordCount) {
 
     /* If only the command was given, cd to the home directory */
     if (wordCount == 1) {
-        setenv("PWD", getenv("HOME"), 1);
+        chdir(getenv("HOME"));
         return;
     }
 
-    /* If first char in location path is '/', then path is absolute */
-    if (location[0] == '/') {
-        setenv("PWD", location, 1);
-        return;
-    }
-
-    /* Else, path is relative  */
-    /* Append location path to current PWD */
-    int newPwdLength = strlen(getenv("PWD")) + strlen(location) + 2; // add a '/' seperator and '\0' at end
-    char newPwd[newPwdLength];
-    strcpy(newPwd, getenv("PWD"));
-    strcat(newPwd, "/\0");
-    strcat(newPwd, location);
-
-    /* Set env with new PWD */
-    setenv("PWD", newPwd, 1);
+    /* Else change to the location directory */
+    chdir(location);
     return;
 }
 
@@ -185,8 +171,8 @@ int createNewProcess(char** argumentsArray, int wordCount){
         /* Child Case */
         case 0:
             execvp(argumentsArray[0], argumentsArray);
-            perror("execvp");
-            exit(2);
+            perror("Could not find command in path\n");
+            exit(1);
             break;
         
         /* Parent Case */
@@ -195,14 +181,14 @@ int createNewProcess(char** argumentsArray, int wordCount){
             /* Wait for child process to terminate */
             spawnPid = waitpid(spawnPid, &childStatus, 0);
 
-            
-
+            /* If process is not a background process, set env variables
+            *   with PID and exit status */
             if (!backgroundProcess) {
 
-                /* Convert spawnPID and its exit status to string*/
+                /* Convert spawnPID to string*/
                 sprintf(pidString, "%d", spawnPid);
 
-                /* Check exit status */ 
+                /* Check exit status and convert to string  */ 
                 if(WIFEXITED(childStatus)) {
                     /* Exited normally */
                     sprintf(pidStatusString, "%d", WEXITSTATUS(childStatus));
