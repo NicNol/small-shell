@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/wait.h>
 
 #define MAX_INPUT_LENGTH 2048
 #define MAX_ARGUMENT_NUMBER 512
@@ -69,7 +70,6 @@ void expandVariable(char* token, char* argument) {
             argument[a_i] = token[t_i];
             a_i++;
         }
-
     }
 }
 
@@ -100,7 +100,7 @@ void getInput(char* input) {
     input[offset] = '\0';
 }
 
-int parseInput(char* input, char** command, char** argumentsArray) {
+int parseInput(char* input, char** argumentsArray) {
 
     /* Set up string token and while loop*/
     char whitespace[] = " \t\n\v\f\r";
@@ -118,56 +118,136 @@ int parseInput(char* input, char** command, char** argumentsArray) {
             return 0;
         }
 
-        /* Catch variable expansion tokens ("$$"). 
-        *   Token value is converted into argument with
-        *   $$ variables expanded. */
+        /* Copy token to argumentsArray and expand any "$$" variables in token */
         argumentLength = getArgumentLength(token);
-        if (argNum == 0) {
-            command[0] = (char*) malloc(argumentLength + 1);
-            expandVariable(token, command[0]);
-        }
-        else {
-            argumentsArray[argNum - 1] = (char*) malloc(argumentLength + 1);
-            expandVariable(token, argumentsArray[argNum - 1]);
-        }
+        argumentsArray[argNum] = (char*) malloc(argumentLength + 1);
+        expandVariable(token, argumentsArray[argNum]);
 
+        /* Set up for next loop */
         token = strtok_r(NULL, whitespace, &saveptr);
         argNum++;
     }
    
+    /* Terminate argumentsArray with a NULL pointer so we know when the list ends */
+    argumentsArray[argNum] = NULL;
+
    return argNum;
 }
 
-void executeInput(char** command, char** argumentsArray, int wordCount) {
-    if (strcmp(command[0], "cd") == 0) {
+void changeDirectory(char* location, int wordCount) {
 
+    /* If only the command was given, cd to the home directory */
+    if (wordCount == 1) {
+        setenv("PWD", getenv("HOME"), 1);
+        return;
+    }
+
+    /* If first char in location path is '/', then path is absolute */
+    if (location[0] == '/') {
+        setenv("PWD", location, 1);
+        return;
+    }
+
+    /* Else, path is relative  */
+    /* Append location path to current PWD */
+    int newPwdLength = strlen(getenv("PWD")) + strlen(location) + 2; // add a '/' seperator and '\0' at end
+    char newPwd[newPwdLength];
+    strcpy(newPwd, getenv("PWD"));
+    strcat(newPwd, "/\0");
+    strcat(newPwd, location);
+
+    /* Set env with new PWD */
+    setenv("PWD", newPwd, 1);
+    return;
+}
+
+/*
+  Create a child process using fork()
+*/
+int createNewProcess(char** argumentsArray, int wordCount){
+
+    /* Declare and initialize variables */
+	int childStatus;
+	pid_t spawnPid = fork();
+    char pidString[20];
+    char pidStatusString[20];
+    bool backgroundProcess = (strcmp(argumentsArray[wordCount - 1], "&") == 0);
+
+    /* Create a switch case to catch errors, child process, and parent process */
+	switch(spawnPid){
         
+        /* Error Case */
+        case -1:
+            perror("fork()\n");
+            exit(1);
+            break;
+        
+        /* Child Case */
+        case 0:
+            execvp(argumentsArray[0], argumentsArray);
+            perror("execvp");
+            exit(2);
+            break;
+        
+        /* Parent Case */
+        default:
+        
+            /* Wait for child process to terminate */
+            spawnPid = waitpid(spawnPid, &childStatus, 0);
 
-        /* If only the command was given, cd to the home directory */
-        if (wordCount == 1) {
-            setenv("PWD", getenv("HOME"), 1);
-        }
-        /* Else cd to the first argument directory */
-        else {
+            
 
-        }
+            if (!backgroundProcess) {
 
-        return;
+                /* Convert spawnPID and its exit status to string*/
+                sprintf(pidString, "%d", spawnPid);
+
+                /* Check exit status */ 
+                if(WIFEXITED(childStatus)) {
+                    /* Exited normally */
+                    sprintf(pidStatusString, "%d", WEXITSTATUS(childStatus));
+                }
+                else {
+                    /* Exited abnormally */
+                    sprintf(pidStatusString, "%d", WTERMSIG(childStatus));
+                }
+
+                /* Set spawnPID and its status to environment variable */
+                setenv("spawnPID", pidString, 1);
+                setenv("spawnPIDStatus", pidStatusString, 1);
+            }
+	} 
+}
+
+void executeInput(char** argumentsArray, int wordCount) {
+    char* command = argumentsArray[0];
+
+    if (strcmp(command, "cd") == 0) {
+        return changeDirectory(argumentsArray[1], wordCount);
     }
 
-    if (strcmp(command[0], "status") == 0) {
+    if (strcmp(command, "status") == 0) {
+        char* pidString = getenv("spawnPID"); // if no spawnPID, returns NULL
+        char* pidStatusString = getenv("spawnPIDStatus");
 
+        if (pidString == NULL) {
+            printf("exit status 0\n");
+            return;
+        }
+
+        printf("PID %s exited with status %s\n", pidString, pidStatusString);
         return;
-    }
-
-    if (strcmp(command[0], "ls") == 0) {
-        printf("PWD is %s\n", getenv("PWD"));
     }
 
     else {
-
+        createNewProcess(argumentsArray, wordCount);
         return;
     }
+}
+
+void cleanup() {
+    unsetenv("spawnPID");
+    unsetenv("spawnPIDStatus");
 }
 
 /*
@@ -187,7 +267,6 @@ int main(void) {
 
     /* Declare Variables */
     char input[MAX_INPUT_LENGTH];
-    char* command[1];
     char* argumentsArray[MAX_ARGUMENT_NUMBER];
     int wordCount;
     
@@ -196,10 +275,11 @@ int main(void) {
 
     while(strcmp(input, "exit") != 0) {
         
-        wordCount = parseInput(input, command, argumentsArray);
-        if (wordCount > 0) executeInput(command, argumentsArray, wordCount);
+        wordCount = parseInput(input, argumentsArray);
+        if (wordCount > 0) executeInput(argumentsArray, wordCount);
         getInput(input);
     }
 
+    cleanup();
     return EXIT_SUCCESS;
 }
