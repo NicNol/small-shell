@@ -19,6 +19,7 @@
 #include <dirent.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <signal.h>
 
 #define MAX_INPUT_LENGTH 2048
 #define MAX_ARGUMENT_NUMBER 512
@@ -27,6 +28,89 @@ struct processNode {
     pid_t processID;
     struct processNode* next;
 };
+
+bool isBackgroundProcessAllowed(char* command) {
+    static bool response = true;
+    
+    if (strcmp(command, "toggle") == 0) {
+        response = !response;
+        return response;
+    }
+
+    return response;
+}
+
+void handleSIGINT(int signalNumber){
+    	
+}
+
+void handleSIGTSTP(int signalNumber) {
+
+    static bool allowBackgroundProcesses = false;
+    static int count = 0;
+
+    static pid_t* parentPID = NULL;
+    pid_t currentPID = getpid();
+    if (parentPID == NULL) {
+        parentPID = malloc(sizeof(currentPID));
+        *parentPID = currentPID;
+    }
+
+    if (currentPID == *parentPID) {
+        if (count == 0) {
+            //Skip messages on initialization
+            count++;
+            isBackgroundProcessAllowed("toggle");
+        }
+
+        else if (allowBackgroundProcesses) {
+            char* enterMessage = "Entering foreground-only mode (& is now ignored).\n";
+            write(STDIN_FILENO, enterMessage, 51);
+        }
+
+        else {
+            char* exitMessage = "Exiting foreground-only mode.\n";
+            write(STDIN_FILENO, exitMessage, 31);
+        }
+
+        allowBackgroundProcesses = !allowBackgroundProcesses;
+        isBackgroundProcessAllowed("toggle");
+        
+    }
+
+    return;
+}
+
+void setupSignals() {
+    struct sigaction SIGINT_action = {0};
+    struct sigaction SIGTSTP_action = {0};
+    
+	// Fill out the SIGINT_action struct
+	// Register handleSIGINT as the signal handler
+	SIGINT_action.sa_handler = handleSIGINT;
+	sigfillset(&SIGINT_action.sa_mask);
+	SIGINT_action.sa_flags = SA_RESTART;
+	sigaction(SIGINT, &SIGINT_action, NULL);
+
+    SIGTSTP_action.sa_handler = handleSIGTSTP;
+    sigfillset(&SIGTSTP_action.sa_mask);
+    SIGTSTP_action.sa_flags = SA_RESTART;
+    sigaction(SIGTSTP, &SIGTSTP_action, NULL);
+
+}
+
+void handleChildSignals(bool isBackgroundProcess) {
+    /* All children ignore the SIGTSTP signal per the requirements */
+    signal(SIGTSTP, SIG_IGN);
+
+    /* Only background processes ignore the SIGINT signal per the requirements */
+    if (isBackgroundProcess) {
+        signal(SIGINT, SIG_IGN);
+    }
+    else {
+        signal(SIGINT, SIG_DFL);
+    }
+}
 
 /* Check for variables that need to be expanded from "$$" to the process ID */
 int getArgumentLength(char* argument) {
@@ -96,8 +180,16 @@ void getInput(char* input) {
 
     /* Get user input */
     printf(": ");
+    fflush(stdout);
 
     while((ch = getchar()) != '\n') {
+
+        if (ch == EOF) {
+            clearerr(stdin);
+            printf(": ");
+            fflush(stdout);
+        }
+
         input[offset] = ch;
         offset++;
     }
@@ -282,12 +374,22 @@ void getStatus() {
     /* If no child process has been created, print status 0 */
     if (pidString == NULL) {
         printf("exit status 0\n");
+        fflush(stdout);
         return;
     }
 
     /* Else print the last child PID and its status code */
-    printf("PID %s exited with status %s\n", pidString, pidStatusString);
-    return;
+    if ((strcmp(pidStatusString, "0") == 0) || (strcmp(pidStatusString, "1") == 0)) {
+        printf("PID %s exited with value %s\n", pidString, pidStatusString);
+        fflush(stdout);
+        return;
+    }
+    else {
+        printf("PID %s terminated with status %s\n", pidString, pidStatusString);
+        fflush(stdout);
+        return;
+    }
+    
 }
 
 void setSpawnPID(pid_t spawnPid, int childStatus) {
@@ -361,6 +463,7 @@ void checkSpawnPID(struct processNode** headNode) {
 
             /* Print message that process has terminated */
             printf("Background PID %s exited with status %s\n", pidString, pidStatusString);
+            fflush(stdout);
 
             /* Remove this processNode from the linked list */
             if (currentNode == *headNode) {
@@ -429,11 +532,19 @@ int createNewProcess(char** argumentsArray, int wordCount){
 
     /* Declare and initialize variables */
 	int childStatus;
+    pid_t result;
 	pid_t spawnPid = fork();
     bool backgroundProcess = (strcmp(argumentsArray[wordCount - 1], "&") == 0);
+    bool backgroundProcessAllowed = isBackgroundProcessAllowed("request");
 
+    /* Remove '&' from list of arguments */
     if (backgroundProcess) {
         argumentsArray[wordCount - 1] = NULL;
+
+        /* Disallow the background process if the global flag has been set */
+        if (!backgroundProcessAllowed) {
+            backgroundProcess = false;
+        }
     }
     
     /* Create a switch case to catch errors, child process, and parent process */
@@ -447,6 +558,7 @@ int createNewProcess(char** argumentsArray, int wordCount){
         
         /* Child Case */
         case 0:
+            handleChildSignals(backgroundProcess);
             handleRedirects(argumentsArray, backgroundProcess);
             execvp(argumentsArray[0], argumentsArray);
             perror("Could not find command in path\n");
@@ -460,13 +572,22 @@ int createNewProcess(char** argumentsArray, int wordCount){
             if (backgroundProcess) {
                 handleSpawnPID("stash", spawnPid);
                 printf("PID %d is running in the background\n", spawnPid);
+                fflush(stdout);
             }
             /* If process is not a background process, set env variables
             *   with PID and exit status */
             else {
                 /* Wait for child process to terminate */
-                spawnPid = waitpid(spawnPid, &childStatus, 0);
+                result = waitpid(spawnPid, &childStatus, 0);
+
+                /* Set env variables with last PID and status */
                 setSpawnPID(spawnPid, childStatus);
+                
+                /* If an error was found, print the status */
+                if (WIFSIGNALED(childStatus)) {
+                    getStatus();
+                }
+                
             }
 	} 
 }
@@ -514,6 +635,11 @@ int main(void) {
     char* argumentsArray[MAX_ARGUMENT_NUMBER];
     int wordCount;
     
+    /* Set up signal handling */
+    setupSignals();
+    /* Initialize handler with Parent PID */
+    handleSIGINT(0);
+    handleSIGTSTP(0);
 
     getInput(input);
 
