@@ -29,6 +29,11 @@ struct processNode {
     struct processNode* next;
 };
 
+struct messageNode {
+    char* message;
+    struct messageNode* next;
+};
+
 bool isBackgroundProcessAllowed(char* command) {
     static bool response = true;
     
@@ -40,45 +45,105 @@ bool isBackgroundProcessAllowed(char* command) {
     return response;
 }
 
+void stashMessage(char* message, struct messageNode** headNode) {
+    /* Create a new node */
+    struct messageNode* newNode = malloc(sizeof(struct messageNode));
+    newNode->message = malloc(strlen(message) + 1);
+    strcpy(newNode->message, message);
+    newNode->next = NULL;
+
+    /* Traverse to end of linked list */
+    struct messageNode* currentNode = *headNode;
+    while (currentNode != NULL && currentNode->next != NULL) {
+        currentNode = currentNode->next;
+    }
+
+    /* Add new node to end of linked list */
+    if (currentNode == NULL) {
+        *headNode = newNode;
+    }
+    else {
+        currentNode->next = newNode;
+    }
+}
+
+void printMessages(struct messageNode** headNode) {
+
+    struct messageNode* garbageNode;
+    char* garbageMessage;
+
+    /* Print new line before printing results for legibility */
+    if (*headNode != NULL) {
+        printf("\n");
+        fflush(stdout);
+    }
+    
+    /* Traverse linked list of messages */
+    while (*headNode != NULL) {
+
+        /* Print message at head */
+        printf("%s", (*headNode)->message);
+        fflush(stdout);
+
+        /* Assign message at head as garbage */
+        garbageNode = *headNode;
+        garbageMessage = (*headNode)->message;
+
+        /* Move head pointer to next node */
+        *headNode = (*headNode)->next;
+
+        /* Free garbage from memory */
+        free(garbageMessage);
+        free(garbageNode);
+    }
+}
+
+int handleMessages(char* action, char* message) {
+
+    static struct messageNode** headNode = NULL;
+    static int count = 0;
+
+    if (headNode == NULL) {
+        headNode = malloc(sizeof(struct messageNode*));
+    }
+
+    if (strcmp(action, "stash") == 0) {
+        stashMessage(message, headNode);
+        count++;
+        return count;
+    }
+
+    if ((*headNode != NULL) && (strcmp(action, "print") == 0)) {
+        printMessages(headNode);
+        count = 0;
+        return count;
+    }
+
+    if (strcmp(action, "count") == 0) {
+        return count;
+    }
+}
+
 void handleSIGINT(int signalNumber){
-    	
+    //No actions -- Parent to Ignore SIGINT
 }
 
 void handleSIGTSTP(int signalNumber) {
 
-    static bool allowBackgroundProcesses = false;
-    static int count = 0;
+    static bool allowBackgroundProcesses = true;
 
-    static pid_t* parentPID = NULL;
-    pid_t currentPID = getpid();
-    if (parentPID == NULL) {
-        parentPID = malloc(sizeof(currentPID));
-        *parentPID = currentPID;
+    if (allowBackgroundProcesses) {
+        char* enterMessage = "Entering foreground-only mode (& is now ignored).\n";
+        handleMessages("stash", enterMessage);
     }
 
-    if (currentPID == *parentPID) {
-        if (count == 0) {
-            //Skip messages on initialization
-            count++;
-            isBackgroundProcessAllowed("toggle");
-        }
-
-        else if (allowBackgroundProcesses) {
-            char* enterMessage = "Entering foreground-only mode (& is now ignored).\n";
-            write(STDIN_FILENO, enterMessage, 51);
-        }
-
-        else {
-            char* exitMessage = "Exiting foreground-only mode.\n";
-            write(STDIN_FILENO, exitMessage, 31);
-        }
-
-        allowBackgroundProcesses = !allowBackgroundProcesses;
-        isBackgroundProcessAllowed("toggle");
-        
+    else {
+        char* exitMessage = "Exiting foreground-only mode.\n";
+        handleMessages("stash", exitMessage);
     }
 
-    return;
+    allowBackgroundProcesses = !allowBackgroundProcesses;
+    isBackgroundProcessAllowed("toggle");
 }
 
 void setupSignals() {
@@ -182,13 +247,18 @@ void getInput(char* input) {
     printf(": ");
     fflush(stdout);
 
+    /* Note to self: Allow interuptions until exec function runs so that messages print at console */
+    /* Then return to a function that handles user input (need to create something like "handleInput" */
+
     while((ch = getchar()) != '\n') {
 
-        if (ch == EOF) {
-            clearerr(stdin);
+        if (handleMessages("count", NULL) > 0) {
+            handleMessages("print", NULL);
             printf(": ");
             fflush(stdout);
         }
+
+        printf("offset = %d\n", offset);
 
         input[offset] = ch;
         offset++;
@@ -637,16 +707,15 @@ int main(void) {
     
     /* Set up signal handling */
     setupSignals();
-    /* Initialize handler with Parent PID */
-    handleSIGINT(0);
-    handleSIGTSTP(0);
 
+    /* Begin getting user input */
     getInput(input);
 
     while(strcmp(input, "exit") != 0) {
         
         wordCount = parseInput(input, argumentsArray);
         if (wordCount > 0) executeInput(argumentsArray, wordCount);
+        handleMessages("print", NULL);
         handleSpawnPID("check", 0);
         getInput(input);
     }
