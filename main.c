@@ -31,6 +31,7 @@ struct processNode {
 
 struct messageNode {
     char* message;
+    int messageLength;
     struct messageNode* next;
 };
 
@@ -45,11 +46,12 @@ bool isBackgroundProcessAllowed(char* command) {
     return response;
 }
 
-void stashMessage(char* message, struct messageNode** headNode) {
+void stashMessage(char* message, int messageLength, struct messageNode** headNode) {
     /* Create a new node */
     struct messageNode* newNode = malloc(sizeof(struct messageNode));
     newNode->message = malloc(strlen(message) + 1);
     strcpy(newNode->message, message);
+    newNode->messageLength = messageLength;
     newNode->next = NULL;
 
     /* Traverse to end of linked list */
@@ -74,16 +76,16 @@ void printMessages(struct messageNode** headNode) {
 
     /* Print new line before printing results for legibility */
     if (*headNode != NULL) {
-        printf("\n");
-        fflush(stdout);
+        write(STDOUT_FILENO, "\n", 2);
     }
     
     /* Traverse linked list of messages */
     while (*headNode != NULL) {
 
         /* Print message at head */
-        printf("%s", (*headNode)->message);
-        fflush(stdout);
+        if(strlen((*headNode)->message) > 0) {
+            write(STDOUT_FILENO, (*headNode)->message, (*headNode)->messageLength);
+        }
 
         /* Assign message at head as garbage */
         garbageNode = *headNode;
@@ -93,32 +95,38 @@ void printMessages(struct messageNode** headNode) {
         *headNode = (*headNode)->next;
 
         /* Free garbage from memory */
-        free(garbageMessage);
-        free(garbageNode);
+        if (garbageMessage != NULL) free(garbageMessage);
+        if (garbageNode != NULL) free(garbageNode);
+        
     }
 }
 
-int handleMessages(char* action, char* message) {
+int handleMessages(char* action, char* message, int messageLength) {
 
+    /* Declare and Initialize variables */
     static struct messageNode** headNode = NULL;
     static int count = 0;
 
+    /* Create an address for the headNode of the message stash to be stored on the first call */
     if (headNode == NULL) {
         headNode = malloc(sizeof(struct messageNode*));
     }
 
+    /* If command is to stash the message, call the stash method and increment the count of messages */
     if (strcmp(action, "stash") == 0) {
-        stashMessage(message, headNode);
+        stashMessage(message, messageLength, headNode);
         count++;
         return count;
     }
 
+    /* If command is to print the messages, ensure that a message exists and then call the print method */
     if ((*headNode != NULL) && (strcmp(action, "print") == 0)) {
         printMessages(headNode);
         count = 0;
         return count;
     }
 
+    /* If command is to count the messages, return the current count */
     if (strcmp(action, "count") == 0) {
         return count;
     }
@@ -128,25 +136,56 @@ void handleSIGINT(int signalNumber){
     //No actions -- Parent to Ignore SIGINT
 }
 
+bool isProcessRunning(char* action) {
+    static bool output = false;
+
+    if (action == NULL) return output;
+
+    if (strcmp(action, "set") == 0) {
+        output = true;
+    }
+
+    if (strcmp(action, "clear") == 0) {
+        output = false;
+    }
+
+    return output;
+}
+
 void handleSIGTSTP(int signalNumber) {
 
+    /* Declare and initialize variables */
+    int messageLength;
+    int maxLength = 60;
+    char message[maxLength];
     static bool allowBackgroundProcesses = true;
 
+    /* Create a message based on if background processes were allowed before the signal call */
     if (allowBackgroundProcesses) {
-        char* enterMessage = "Entering foreground-only mode (& is now ignored).\n";
-        handleMessages("stash", enterMessage);
+        strcpy(message, "Entering foreground-only mode (& is now ignored).\n");
+        messageLength = 51;
     }
-
     else {
-        char* exitMessage = "Exiting foreground-only mode.\n";
-        handleMessages("stash", exitMessage);
+        strcpy(message, "Exiting foreground-only mode.\n");
+        messageLength = 31;
     }
 
+    /* Handle the message by either stashing it or printing it based on if a process is currently running in the foreground */
+    if (isProcessRunning(NULL)) {
+        handleMessages("stash", message, messageLength);
+    }
+    else {
+        write(STDOUT_FILENO, message, messageLength);
+        write(STDOUT_FILENO, ": ", 3);
+    }
+    
+    /* Toggle background processes (True -> False or False -> True) */
     allowBackgroundProcesses = !allowBackgroundProcesses;
     isBackgroundProcessAllowed("toggle");
 }
 
 void setupSignals() {
+    /* Create sigaction struts for SIGINT and SIGTSTP signals */
     struct sigaction SIGINT_action = {0};
     struct sigaction SIGTSTP_action = {0};
     
@@ -161,6 +200,9 @@ void setupSignals() {
     sigfillset(&SIGTSTP_action.sa_mask);
     SIGTSTP_action.sa_flags = SA_RESTART;
     sigaction(SIGTSTP, &SIGTSTP_action, NULL);
+
+    /* Initialize SIGTSTP message handler now to prevent errors on first signal call */
+    handleMessages("count", "\0", 0);
 
 }
 
@@ -247,19 +289,9 @@ void getInput(char* input) {
     printf(": ");
     fflush(stdout);
 
-    /* Note to self: Allow interuptions until exec function runs so that messages print at console */
-    /* Then return to a function that handles user input (need to create something like "handleInput" */
-
     while((ch = getchar()) != '\n') {
 
-        if (handleMessages("count", NULL) > 0) {
-            handleMessages("print", NULL);
-            printf(": ");
-            fflush(stdout);
-        }
-
-        printf("offset = %d\n", offset);
-
+        fflush(stdout);
         input[offset] = ch;
         offset++;
     }
@@ -455,7 +487,7 @@ void getStatus() {
         return;
     }
     else {
-        printf("PID %s terminated with status %s\n", pidString, pidStatusString);
+        printf("PID %s terminated with signal %s\n", pidString, pidStatusString);
         fflush(stdout);
         return;
     }
@@ -508,6 +540,7 @@ void checkSpawnPID(struct processNode** headNode) {
     struct processNode* removedNode = NULL;
     char pidString[20];
     char pidStatusString[20];
+    char exitNoun[10];
 
     /* Traverse Linked List */
     while(currentNode != NULL) {
@@ -525,14 +558,16 @@ void checkSpawnPID(struct processNode** headNode) {
             if(WIFEXITED(processStatus)) {
                 /* Exited normally */
                 sprintf(pidStatusString, "%d", WEXITSTATUS(processStatus));
+                strcpy(exitNoun, "value");
             }
             else {
                 /* Exited abnormally */
                 sprintf(pidStatusString, "%d", WTERMSIG(processStatus));
+                strcpy(exitNoun, "signal");
             }
 
             /* Print message that process has terminated */
-            printf("Background PID %s exited with status %s\n", pidString, pidStatusString);
+            printf("Background PID %s exited with %s %s\n", pidString, exitNoun, pidStatusString);
             fflush(stdout);
 
             /* Remove this processNode from the linked list */
@@ -648,7 +683,9 @@ int createNewProcess(char** argumentsArray, int wordCount){
             *   with PID and exit status */
             else {
                 /* Wait for child process to terminate */
+                isProcessRunning("set");
                 result = waitpid(spawnPid, &childStatus, 0);
+                isProcessRunning("clear");
 
                 /* Set env variables with last PID and status */
                 setSpawnPID(spawnPid, childStatus);
@@ -715,7 +752,7 @@ int main(void) {
         
         wordCount = parseInput(input, argumentsArray);
         if (wordCount > 0) executeInput(argumentsArray, wordCount);
-        handleMessages("print", NULL);
+        handleMessages("print", NULL, 0);
         handleSpawnPID("check", 0);
         getInput(input);
     }
