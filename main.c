@@ -170,6 +170,7 @@ int handleMessages(char* action, char* message, int messageLength) {
     /* Create an address for the headNode of the message stash to be stored on the first call */
     if (headNode == NULL) {
         headNode = malloc(sizeof(struct messageNode*));
+        *headNode = NULL;
     }
 
     /* Catch NULL action values as they will throw errors on strcmp */
@@ -333,6 +334,7 @@ int getArgumentLength(char* argument) {
     pid_t pid = getpid();
     char pidString[20];
     sprintf(pidString, "%d", pid);
+    fflush(stdout);
     int pidLength = strlen(pidString);
     int variableCount = 0;
     int i;
@@ -362,19 +364,20 @@ int getArgumentLength(char* argument) {
 void expandVariable(char* token, char* argument) {
 
     /* Set up and declare variables */
-    int t_i; // token index
+    int t_i = 0; // token index
     int a_i = 0; // argument index
 
     pid_t pid = getpid();
     char pidString[20];
     sprintf(pidString, "%d", pid); // Convert PID from type pid_t to string
+    fflush(stdout);
     int pidLength = strlen(pidString);
 
     /* Parse token for "$$" variable */
     for (t_i = 0; t_i < strlen(token); t_i++) {
 
         /* Concatenate pid to argument if "$$" is found */
-        if(token[t_i] == '$' && token[t_i+1] == '$') {
+        if((token[t_i] == '$') && (t_i + 1 < strlen(token)) && (token[t_i+1] == '$')) {
             argument[a_i] = '\0';
             strcat(argument, pidString);
             t_i++;
@@ -386,6 +389,9 @@ void expandVariable(char* token, char* argument) {
             a_i++;
         }
     }
+
+    /* Terminate argument with null character */
+    argument[a_i] = '\0';
 }
 
 /*
@@ -456,6 +462,10 @@ int parseInput(char* input, char** argumentsArray) {
 
         /* Expand any "$$" variables in token, and then store the expanded string in our argumentsArray */
         expandVariable(token, argumentsArray[argNum]);
+
+        printf("\nargumentLength = %d", argumentLength);
+        printf("\nargumentsArray[%d] = %s\n", argNum, argumentsArray[argNum]);
+        sleep(1);
 
         /* Set up for next loop */
         token = strtok_r(NULL, whitespace, &saveptr);
@@ -710,15 +720,18 @@ void setSpawnPID(pid_t spawnPid, int childStatus) {
 
     /* Convert spawnPID to string*/
     sprintf(pidString, "%d", spawnPid);
+    fflush(stdout);
 
     /* Check child process status and convert to string  */ 
     if(WIFEXITED(childStatus)) {
         /* Exited normally */
         sprintf(pidStatusString, "%d", WEXITSTATUS(childStatus));
+        fflush(stdout);
     }
     else {
         /* Exited abnormally */
         sprintf(pidStatusString, "%d", WTERMSIG(childStatus));
+        fflush(stdout);
     }
 
     /* Set spawnPID and its status to environment variables */
@@ -770,7 +783,8 @@ void checkSpawnPID(struct processNode** headNode) {
     struct processNode* removedNode = NULL;
     char pidString[20];
     char pidStatusString[20];
-    char exitNoun[10];
+    char exitNoun[20];
+    char exitVerb[20];
 
     /* Traverse Linked List */
     while(currentNode != NULL) {
@@ -783,21 +797,26 @@ void checkSpawnPID(struct processNode** headNode) {
 
             /* Convert spawnPID to string*/
             sprintf(pidString, "%d", currentNode->processID);
+            fflush(stdout);
 
             /* Check exit status and convert to string  */ 
             if(WIFEXITED(processStatus)) {
                 /* Exited normally */
                 sprintf(pidStatusString, "%d", WEXITSTATUS(processStatus));
+                fflush(stdout);
+                strcpy(exitVerb, "exited");
                 strcpy(exitNoun, "value");
             }
             else {
                 /* Exited abnormally */
                 sprintf(pidStatusString, "%d", WTERMSIG(processStatus));
+                fflush(stdout);
+                strcpy(exitVerb, "terminated");
                 strcpy(exitNoun, "signal");
             }
 
             /* Print message that process has exited or been terminated */
-            printf("Background PID %s exited with %s %s\n", pidString, exitNoun, pidStatusString);
+            printf("Background PID %s %s with %s %s\n", pidString, exitVerb, exitNoun, pidStatusString);
             fflush(stdout);
 
             /* Remove this processNode from the linked list */
@@ -857,10 +876,11 @@ void killSpawnPID(struct processNode** headNode) {
 */
 void handleSpawnPID(char* action, pid_t spawnPid) {
 
-    /* On first call of this function, create a static headNode pointer */
+    /* On first call of this function, create a static headNode pointer and initialize the location to NULL */
     static struct processNode** headNode = NULL;
     if (headNode == NULL) {
-        headNode = malloc(sizeof(malloc(sizeof(struct processNode))));
+        headNode = malloc(sizeof(struct processNode*));
+        *headNode = NULL;
     }
 
     /* Catch NULL actions to prevent errors with strcmp */
