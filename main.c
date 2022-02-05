@@ -463,10 +463,6 @@ int parseInput(char* input, char** argumentsArray) {
         /* Expand any "$$" variables in token, and then store the expanded string in our argumentsArray */
         expandVariable(token, argumentsArray[argNum]);
 
-        printf("\nargumentLength = %d", argumentLength);
-        printf("\nargumentsArray[%d] = %s\n", argNum, argumentsArray[argNum]);
-        sleep(1);
-
         /* Set up for next loop */
         token = strtok_r(NULL, whitespace, &saveptr);
         argNum++;
